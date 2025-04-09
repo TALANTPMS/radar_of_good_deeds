@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Рейтинг — Радар добрых дел{% endblock %}
+{% block content %}
+<div class="container">
+  <h3 class="text-center mb-4">Рейтинг</h3>
+  <div class="row">
+    <div class="col-md-6">
+      <h5>Топ-100 по объявлениям</h5>
+      <ol>
+        {% for user in top_announcements %}
+        <li>{{ user.username }} — {{ user.markers|length }} объявлений</li>
+        {% endfor %}
+      </ol>
+    </div>
+    <div class="col-md-6">
+      <h5>Топ-100 по отзывам</h5>
+      <ol>
+        {% for user in top_feedback %}
+        <li>{{ user.username }} — {{ user.comments|length }} отзывов</li>
+        {% endfor %}
+      </ol>
+    </div>
+  </div>
+</div>
+{% endblock %}

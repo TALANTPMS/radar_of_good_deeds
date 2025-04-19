@@ -6,14 +6,26 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime
 import re
 import os
+from dotenv import load_dotenv
+import logging
+from logging.handlers import RotatingFileHandler
+import sys
+
+load_dotenv()  # загружаем переменные окружения из .env
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'KAPIBARA2025SKANAPP'
-# Изменяем конфигурацию БД для Vercel
-if 'VERCEL' in os.environ:
-    app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///./users.db')
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'KAPIBARA2025SKANAPP')
+
+# Настройка базы данных
+if os.environ.get('VERCEL_ENV') == 'production':
+    DATABASE_URL = os.environ.get('POSTGRES_URL')
+    if DATABASE_URL:
+        DATABASE_URL = DATABASE_URL.replace('postgres://', 'postgresql://')
+        app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
 else:
-    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///./users.db'
+    basedir = os.path.abspath(os.path.dirname(__file__))
+    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(basedir, 'users.db')
+
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
@@ -254,7 +266,9 @@ def add_marker():
         db.session.commit()
         return jsonify({'status': 'success', 'marker_id': marker.id})
     except Exception as e:
-        return jsonify({'status': 'error', 'error': str(e)}), 400
+        db.session.rollback()
+        app.logger.error(f'Error adding marker: {str(e)}')
+        return jsonify({'status': 'error', 'error': 'Internal Server Error'}), 500
 
 
 # Редактирование метки (AJAX)
@@ -275,7 +289,9 @@ def edit_marker():
         else:
             return jsonify({'status': 'error', 'error': 'Нет доступа или метка не найдена'}), 403
     except Exception as e:
-        return jsonify({'status': 'error', 'error': str(e)}), 400
+        db.session.rollback()
+        app.logger.error(f'Error editing marker: {str(e)}')
+        return jsonify({'status': 'error', 'error': 'Internal Server Error'}), 500
 
 
 # Удаление метки (AJAX)
@@ -292,7 +308,9 @@ def delete_marker():
         else:
             return jsonify({'status': 'error', 'error': 'Нет доступа или метка не найдена'}), 403
     except Exception as e:
-        return jsonify({'status': 'error', 'error': str(e)}), 400
+        db.session.rollback()
+        app.logger.error(f'Error deleting marker: {str(e)}')
+        return jsonify({'status': 'error', 'error': 'Internal Server Error'}), 500
 
 
 # Добавление комментария (AJAX)
@@ -310,19 +328,53 @@ def add_comment():
         db.session.commit()
         return jsonify({'status': 'success', 'comment_id': comment.id})
     except Exception as e:
-        return jsonify({'status': 'error', 'error': str(e)}), 400
+        db.session.rollback()
+        app.logger.error(f'Error adding comment: {str(e)}')
+        return jsonify({'status': 'error', 'error': 'Internal Server Error'}), 500
 
 
 # Add error handlers
 @app.errorhandler(500)
 def internal_error(error):
     db.session.rollback()
-    return render_template('error.html', error=error), 500
+    app.logger.error(f'Server Error: {str(error)}')
+    return render_template('error.html', error="Internal Server Error"), 500
 
 
 @app.errorhandler(404)
 def not_found_error(error):
-    return render_template('error.html', error=error), 404
+    app.logger.info(f'Page not found: {request.url}')
+    return render_template('error.html', error="Page Not Found"), 404
+
+
+# Configure logging
+if not app.debug:
+    if not os.path.exists('logs'):
+        os.mkdir('logs')
+    file_handler = RotatingFileHandler('logs/good_deeds.log', maxBytes=10240, backupCount=10)
+    file_handler.setFormatter(logging.Formatter(
+        '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
+    ))
+    file_handler.setLevel(logging.INFO)
+    app.logger.addHandler(file_handler)
+    app.logger.setLevel(logging.INFO)
+    app.logger.info('Good Deeds startup')
+
+# Improve database error handling
+def get_db():
+    if 'db' not in g:
+        try:
+            g.db = db.session
+        except Exception as e:
+            app.logger.error(f'Database connection error: {str(e)}')
+            raise
+    return g.db
+
+@app.teardown_appcontext
+def teardown_db(exception=None):
+    db = g.pop('db', None)
+    if db is not None:
+        db.close()
 
 
 if __name__ == '__main__':

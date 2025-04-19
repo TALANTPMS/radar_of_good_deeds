@@ -5,10 +5,15 @@ from flask_login import LoginManager, UserMixin, login_user, logout_user, login_
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime
 import re
+import os
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'KAPIBARA2025SKANAPP'
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///./users.db'
+# Изменяем конфигурацию БД для Vercel
+if 'VERCEL' in os.environ:
+    app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///./users.db')
+else:
+    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///./users.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)

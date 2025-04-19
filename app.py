@@ -8,7 +8,7 @@ import re
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'KAPIBARA2025SKANAPP'
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///users.db'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///./users.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
@@ -103,10 +103,18 @@ def load_user(user_id):
     return User.query.get(int(user_id))
 
 
-# Главная страница – карта с метками
+# Change root route to redirect to login
 @app.route('/')
+def root():
+    if current_user.is_authenticated:
+        return redirect(url_for('map_view'))
+    return redirect(url_for('login'))
+
+
+# Главная страница – карта с метками
+@app.route('/map')
 @login_required
-def index():
+def map_view():
     markers = Marker.query.filter(Marker.deadline >= datetime.today().date()).all()
     center_lat = current_user.lat if current_user.lat is not None else 55.7558
     center_lng = current_user.lng if current_user.lng is not None else 37.6176
@@ -143,7 +151,7 @@ def location():
         current_user.lat, current_user.lng = coords
         db.session.commit()
         flash('Местоположение обновлено', 'success')
-        return redirect(url_for('index'))
+        return redirect(url_for('map_view'))
     return render_template('location.html', user=current_user)
 
 
@@ -176,7 +184,7 @@ def search():
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if current_user.is_authenticated:
-        return redirect(url_for('index'))
+        return redirect(url_for('map_view'))
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
@@ -184,7 +192,7 @@ def login():
         if user and user.check_password(password):
             login_user(user)
             flash('Вы успешно вошли!', 'success')
-            return redirect(url_for('index'))
+            return redirect(url_for('map_view'))
         else:
             flash('Неправильное имя пользователя или пароль', 'danger')
     return render_template('login.html')
@@ -194,7 +202,7 @@ def login():
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if current_user.is_authenticated:
-        return redirect(url_for('index'))
+        return redirect(url_for('map_view'))
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
@@ -298,6 +306,18 @@ def add_comment():
         return jsonify({'status': 'success', 'comment_id': comment.id})
     except Exception as e:
         return jsonify({'status': 'error', 'error': str(e)}), 400
+
+
+# Add error handlers
+@app.errorhandler(500)
+def internal_error(error):
+    db.session.rollback()
+    return render_template('error.html', error=error), 500
+
+
+@app.errorhandler(404)
+def not_found_error(error):
+    return render_template('error.html', error=error), 404
 
 
 if __name__ == '__main__':

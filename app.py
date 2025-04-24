@@ -1,4 +1,4 @@
-from flask import Flask, render_template, redirect, url_for, request, flash, jsonify
+from flask import Flask, render_template, redirect, url_for, request, flash, jsonify, g
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
@@ -6,15 +6,23 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime
 import re
 import os
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+    load_dotenv()  # загружаем переменные окружения из .env
+except ImportError:
+    print("python-dotenv not installed, skipping .env loading")
 import logging
 from logging.handlers import RotatingFileHandler
 import sys
+from sqlalchemy.exc import SQLAlchemyError
 
-load_dotenv()  # загружаем переменные окружения из .env
-
+# Обновляем путь к шаблонам и статическим файлам
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'KAPIBARA2025SKANAPP')
+
+# Обновляем конфигурацию БД для локального запуска
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///users.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['SECRET_KEY'] = 'KAPIBARA2025SKANAPP'
 
 # Настройка базы данных
 if os.environ.get('VERCEL_ENV') == 'production':
@@ -27,6 +35,19 @@ else:
     app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(basedir, 'users.db')
 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+# Обновляем конфигурацию БД для работы на Vercel
+if os.environ.get('VERCEL_ENV') == 'production':
+    # Используем SQLite для демонстрации, в продакшене лучше использовать PostgreSQL
+    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///users.db'
+else:
+    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///users.db'
+
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+# Настраиваем пути к шаблонам и статическим файлам для Vercel
+app.template_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'templates')
+app.static_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static')
 
 db = SQLAlchemy(app)
 migrate = Migrate(app, db)
@@ -333,29 +354,42 @@ def add_comment():
         return jsonify({'status': 'error', 'error': 'Internal Server Error'}), 500
 
 
-# Add error handlers
-@app.errorhandler(500)
-def internal_error(error):
-    db.session.rollback()
-    app.logger.error(f'Server Error: {str(error)}')
-    return render_template('error.html', error="Internal Server Error"), 500
+# Улучшенная настройка логирования с проверкой прав доступа
+def setup_logging(app):
+    log_dir = 'logs'
+    try:
+        if not os.path.exists(log_dir):
+            os.makedirs(log_dir)
+        log_file = os.path.join(log_dir, 'good_deeds.log')
+        
+        # Проверяем права на запись
+        try:
+            with open(log_file, 'a') as f:
+                pass
+        except IOError as e:
+            print(f"Error: Unable to write to log file: {e}")
+            return
 
+        file_handler = RotatingFileHandler(log_file, maxBytes=10240, backupCount=10)
+        file_handler.setFormatter(logging.Formatter(
+            '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
+        ))
+        file_handler.setLevel(logging.INFO)
+        app.logger.addHandler(file_handler)
+        app.logger.setLevel(logging.INFO)
+        app.logger.info('Good Deeds startup')
+    except Exception as e:
+        print(f"Error setting up logging: {e}")
 
-@app.errorhandler(404)
-def not_found_error(error):
-    app.logger.info(f'Page not found: {request.url}')
-    return render_template('error.html', error="Page Not Found"), 404
-
-
-# Configure logging
-if not app.debug:
-    if not os.path.exists('logs'):
-        os.mkdir('logs')
-    file_handler = RotatingFileHandler('logs/good_deeds.log', maxBytes=10240, backupCount=10)
-    file_handler.setFormatter(logging.Formatter(
-        '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
-    ))
-    file_handler.setLevel(logging.INFO)
+# Инициализация базы данных с обработкой ошибок
+def init_db():
+    try:
+        with app.app_context():
+            db.create_all()
+            app.logger.info('Database initialized successfully')
+    except Exception as e:
+        app.logger.error(f'Error initializing database: {str(e)}')
+        raise
     app.logger.addHandler(file_handler)
     app.logger.setLevel(logging.INFO)
     app.logger.info('Good Deeds startup')
@@ -378,4 +412,6 @@ def teardown_db(exception=None):
 
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    with app.app_context():
+        db.create_all()
+    app.run(debug=True, host='0.0.0.0', port=5000)

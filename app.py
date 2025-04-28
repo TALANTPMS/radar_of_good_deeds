@@ -1,12 +1,33 @@
+import os
 from flask import Flask, render_template, jsonify, request, redirect, url_for
+from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'KAPIBARA2025SKANAPP'
 
-# In-memory storage for markers
-markers = []
-marker_id_counter = 1
+# Получаем строку подключения из переменной окружения
+db_url = os.environ.get('DATABASE_URL')
+if db_url is None:
+    # fallback для локальной разработки
+    db_url = 'sqlite:///users.db'
+# Для корректной работы с postgres+psycopg2
+if db_url.startswith("postgres://"):
+    db_url = db_url.replace("postgres://", "postgresql://", 1)
+app.config['SQLALCHEMY_DATABASE_URI'] = db_url
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+db = SQLAlchemy(app)
+
+class Marker(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    help_needed = db.Column(db.String(255), nullable=False)
+    offer = db.Column(db.String(255), default='')
+    location_text = db.Column(db.String(255), nullable=False)
+    deadline = db.Column(db.Date, nullable=False)
+    contact = db.Column(db.String(255), nullable=False)
+    latitude = db.Column(db.Float, nullable=False)
+    longitude = db.Column(db.Float, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 # Default center coordinates
 DEFAULT_CENTER = (51.1605, 71.4704)
@@ -47,6 +68,10 @@ CITY_COORDINATES = {
 }
 
 
+@app.before_first_request
+def create_tables():
+    db.create_all()
+
 @app.route('/')
 def root():
     return map_view()
@@ -54,31 +79,29 @@ def root():
 
 @app.route('/map')
 def map_view():
-    return render_template('index.html', 
-                         markers=[m for m in markers if m['deadline'] >= datetime.today().date()],
-                         center_lat=DEFAULT_CENTER[0],
-                         center_lng=DEFAULT_CENTER[1])
-
+    today = datetime.today().date()
+    markers = Marker.query.filter(Marker.deadline >= today).all()
+    return render_template('index.html',
+        markers=markers,
+        center_lat=DEFAULT_CENTER[0],
+        center_lng=DEFAULT_CENTER[1])
 
 @app.route('/add_marker', methods=['POST'])
 def add_marker():
-    global marker_id_counter
     data = request.get_json()
     try:
-        new_marker = {
-            'id': marker_id_counter,
-            'help_needed': data['help_needed'],
-            'offer': data.get('offer', ''),
-            'location_text': data['location'],
-            'deadline': datetime.strptime(data['deadline'], '%Y-%m-%d').date(),
-            'contact': data['contact'],
-            'latitude': float(data['lat']),
-            'longitude': float(data['lng']),
-            'created_at': datetime.now()
-        }
-        markers.append(new_marker)
-        marker_id_counter += 1
-        return jsonify({'status': 'success', 'marker_id': new_marker['id']})
+        marker = Marker(
+            help_needed=data['help_needed'],
+            offer=data.get('offer', ''),
+            location_text=data['location'],
+            deadline=datetime.strptime(data['deadline'], '%Y-%m-%d').date(),
+            contact=data['contact'],
+            latitude=float(data['lat']),
+            longitude=float(data['lng']),
+        )
+        db.session.add(marker)
+        db.session.commit()
+        return jsonify({'status': 'success', 'marker_id': marker.id})
     except Exception as e:
         return jsonify({'status': 'error', 'error': str(e)}), 500
 
@@ -87,13 +110,14 @@ def add_marker():
 def edit_marker():
     data = request.get_json()
     try:
-        marker = next((m for m in markers if m['id'] == int(data['marker_id'])), None)
+        marker = Marker.query.get(int(data['marker_id']))
         if marker:
-            marker['help_needed'] = data.get('help_needed', marker['help_needed'])
-            marker['offer'] = data.get('offer', marker['offer'])
-            marker['location_text'] = data.get('location', marker['location_text'])
-            marker['deadline'] = datetime.strptime(data['deadline'], '%Y-%m-%d').date()
-            marker['contact'] = data.get('contact', marker['contact'])
+            marker.help_needed = data.get('help_needed', marker.help_needed)
+            marker.offer = data.get('offer', marker.offer)
+            marker.location_text = data.get('location', marker.location_text)
+            marker.deadline = datetime.strptime(data['deadline'], '%Y-%m-%d').date()
+            marker.contact = data.get('contact', marker.contact)
+            db.session.commit()
             return jsonify({'status': 'success'})
         return jsonify({'status': 'error', 'error': 'Marker not found'}), 404
     except Exception as e:
@@ -104,10 +128,12 @@ def edit_marker():
 def delete_marker():
     data = request.get_json()
     try:
-        marker_id = int(data['marker_id'])
-        global markers
-        markers = [m for m in markers if m['id'] != marker_id]
-        return jsonify({'status': 'success'})
+        marker = Marker.query.get(int(data['marker_id']))
+        if marker:
+            db.session.delete(marker)
+            db.session.commit()
+            return jsonify({'status': 'success'})
+        return jsonify({'status': 'error', 'error': 'Marker not found'}), 404
     except Exception as e:
         return jsonify({'status': 'error', 'error': str(e)}), 500
 
@@ -126,10 +152,9 @@ def location():
 
 @app.route('/rating')
 def rating():
-    # Simple counter for markers per location
     location_stats = {}
-    for marker in markers:
-        loc = marker['location_text'].lower()
+    for marker in Marker.query.all():
+        loc = marker.location_text.lower()
         location_stats[loc] = location_stats.get(loc, 0) + 1
     top_locations = sorted(location_stats.items(), key=lambda x: x[1], reverse=True)[:100]
     return render_template('rating.html', top_locations=top_locations)
@@ -140,24 +165,26 @@ def search():
     markers_found = []
     if q:
         q = q.lower()
-        markers_found = [m for m in markers if q in m['location_text'].lower() 
-                        or q in m['help_needed'].lower()]
+        markers_found = Marker.query.filter(
+            (Marker.location_text.ilike(f'%{q}%')) | (Marker.help_needed.ilike(f'%{q}%'))
+        ).all()
     return render_template('search.html', q=q, markers_found=markers_found)
 
 @app.route('/announcements')
 def announcements():
     q = request.args.get('q', '')
-    current_markers = [m for m in markers if m['deadline'] >= datetime.today().date()]
+    today = datetime.today().date()
+    current_markers = Marker.query.filter(Marker.deadline >= today)
     if q:
         q = q.lower()
-        current_markers = [m for m in current_markers 
-                         if q in m['location_text'].lower() 
-                         or q in m['help_needed'].lower()]
-    return render_template('announcements.html', markers=current_markers, query=q)
+        current_markers = current_markers.filter(
+            (Marker.location_text.ilike(f'%{q}%')) | (Marker.help_needed.ilike(f'%{q}%'))
+        )
+    return render_template('announcements.html', markers=current_markers.all(), query=q)
 
 @app.route('/announcement/<int:marker_id>')
 def announcement(marker_id):
-    marker = next((m for m in markers if m['id'] == marker_id), None)
+    marker = Marker.query.get(marker_id)
     if marker:
         return render_template('announcement.html', marker=marker)
     return redirect(url_for('map_view'))

@@ -16,6 +16,3 @@ logs/
 
 # Переменные окружения
 .env
-
-# Vercel
-.vercel

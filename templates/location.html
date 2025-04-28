@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Местоположение — Радар добрых дел{% endblock %}
+{% block content %}
+<div class="container">
+  <h3 class="text-center mb-4">Выберите город</h3>
+  <form method="POST" action="{{ url_for('location') }}" class="w-50 mx-auto">
+    <div class="mb-3">
+      <label class="form-label">Город:</label>
+      <input type="text" class="form-control" name="city" placeholder="Например, Астана" required>
+    </div>
+    <button type="submit" class="btn btn-primary custom-btn w-100">Обновить</button>
+  </form>
+</div>
+{% endblock %}

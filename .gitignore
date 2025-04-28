@@ -1,0 +1,21 @@
+# Виртуальное окружение
+venv/
+env/
+
+# Кеш Python
+__pycache__/
+*.pyc
+
+# Локальные файлы
+instance/
+*.db
+
+# Логи
+logs/
+*.log
+
+# Переменные окружения
+.env
+
+# Vercel
+.vercel

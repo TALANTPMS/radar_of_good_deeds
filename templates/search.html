@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Поиск — Радар добрых дел{% endblock %}
+{% block content %}
+<div class="container">
+  <h3 class="text-center mb-4">Поиск</h3>
+  <form method="GET" action="{{ url_for('search') }}" class="mb-4 w-50 mx-auto">
+    <div class="input-group">
+      <input type="text" name="q" class="form-control" placeholder="Введите город или тему объявления" value="{{ q }}">
+      <button type="submit" class="btn btn-primary custom-btn">Искать</button>
+    </div>
+  </form>
+  <div class="list-group">
+    {% for marker in markers_found %}
+    <a href="{{ url_for('announcement', marker_id=marker.id) }}" class="list-group-item list-group-item-action">
+      <h5 class="mb-1">{{ marker.help_needed }}</h5>
+      <p class="mb-1">{{ marker.location_text }} до {{ marker.deadline.strftime('%d.%m.%Y') }}</p>
+    </a>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}
